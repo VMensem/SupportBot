@@ -1,8 +1,10 @@
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
+import sqlite3
 from types import SimpleNamespace
 import time
 from pathlib import Path
@@ -16,6 +18,9 @@ MENTION_RE = re.compile(r"^<@!?(\d+)>$")
 CONFIG_PATH = Path("config.json")
 EMBED_COLOR = discord.Color.orange()
 MSK_TZ = timezone(timedelta(hours=3), "MSK")
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+SQLITE_DB_PATH = Path(os.getenv("SUPPORTBOT_DB_PATH", "supportbot.db"))
+USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 
 
 def load_config() -> SimpleNamespace:
@@ -51,7 +56,6 @@ def load_config() -> SimpleNamespace:
         },
         "passing_voice_channel_ids": [],
         "verifier_role_ids": [],
-        "stats_file": "voice_stats.json",
         "review_log_channel_id": 0,
         "staff_guild_id": 0,
         "verification_log_channel_id": 0,
@@ -87,9 +91,8 @@ def write_config_data(data: dict) -> None:
 
 
 def reload_runtime_config() -> None:
-    global config, stats_path
+    global config
     config = load_config()
-    stats_path = Path(config.stats_file)
 
 
 intents = discord.Intents.default()
@@ -105,7 +108,6 @@ support_daily_seconds: dict[str, dict[str, int]] = {}
 support_action_stats: dict[str, dict[str, dict[str, object]]] = {}
 persisted_voice_joined_at: dict[str, float] = {}
 daily_report_sent_dates: set[str] = set()
-stats_path = Path(config.stats_file)
 
 
 def normalize_support_action_stats(raw: object) -> dict[str, dict[str, dict[str, object]]]:
@@ -130,61 +132,298 @@ def normalize_support_action_stats(raw: object) -> dict[str, dict[str, dict[str,
     return normalized
 
 
+def sql(statement: str) -> str:
+    return statement.replace("?", "%s") if USE_POSTGRES else statement
+
+
+def db_connect():
+    if USE_POSTGRES:
+        try:
+            import psycopg
+        except ImportError as exc:
+            raise RuntimeError("Для PostgreSQL установи зависимость psycopg[binary] из requirements.txt") from exc
+        return psycopg.connect(DATABASE_URL)
+
+    connection = sqlite3.connect(SQLITE_DB_PATH)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+@contextmanager
+def database_connection():
+    connection = db_connect()
+    try:
+        yield connection
+    finally:
+        connection.close()
+
+
+def init_database() -> None:
+    with database_connection() as connection:
+        cursor = connection.cursor()
+        if USE_POSTGRES:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS voice_totals (
+                    member_id TEXT PRIMARY KEY,
+                    seconds BIGINT NOT NULL DEFAULT 0
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_daily (
+                    day TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    seconds BIGINT NOT NULL DEFAULT 0,
+                    PRIMARY KEY (day, member_id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS active_voice (
+                    member_id TEXT PRIMARY KEY,
+                    joined_at DOUBLE PRECISION NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_reports (
+                    day TEXT PRIMARY KEY
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_actions (
+                    day TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    no_access INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (day, member_id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_reviews (
+                    id BIGSERIAL PRIMARY KEY,
+                    day TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    reviewer_id TEXT NOT NULL,
+                    reviewer_name TEXT NOT NULL,
+                    rating INTEGER NOT NULL,
+                    comment TEXT NOT NULL,
+                    timestamp TEXT NOT NULL
+                )
+                """
+            )
+        else:
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS voice_totals (
+                    member_id TEXT PRIMARY KEY,
+                    seconds INTEGER NOT NULL DEFAULT 0
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_daily (
+                    day TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    seconds INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (day, member_id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS active_voice (
+                    member_id TEXT PRIMARY KEY,
+                    joined_at REAL NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS daily_reports (
+                    day TEXT PRIMARY KEY
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_actions (
+                    day TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    no_access INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (day, member_id)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS support_reviews (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    day TEXT NOT NULL,
+                    member_id TEXT NOT NULL,
+                    reviewer_id TEXT NOT NULL,
+                    reviewer_name TEXT NOT NULL,
+                    rating INTEGER NOT NULL,
+                    comment TEXT NOT NULL,
+                    timestamp TEXT NOT NULL
+                )
+                """
+            )
+        connection.commit()
+
+
 def load_stats() -> None:
     global voice_total_seconds, support_daily_seconds, support_action_stats, persisted_voice_joined_at, daily_report_sent_dates
-    if not stats_path.exists():
-        voice_total_seconds = {}
-        support_daily_seconds = {}
-        support_action_stats = {}
-        persisted_voice_joined_at = {}
-        daily_report_sent_dates = set()
-        return
+    init_database()
 
-    try:
-        data = json.loads(stats_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        voice_total_seconds = {}
-        support_daily_seconds = {}
-        support_action_stats = {}
-        persisted_voice_joined_at = {}
-        daily_report_sent_dates = set()
-        return
+    voice_total_seconds = {}
+    support_daily_seconds = {}
+    support_action_stats = {}
+    persisted_voice_joined_at = {}
+    daily_report_sent_dates = set()
 
-    voice_total_seconds = {
-        str(member_id): int(seconds)
-        for member_id, seconds in data.get("voice_total_seconds", {}).items()
-    }
-    support_daily_seconds = {
-        str(day): {
-            str(member_id): int(seconds)
-            for member_id, seconds in members.items()
-        }
-        for day, members in data.get("support_daily_seconds", {}).items()
-        if isinstance(members, dict)
-    }
-    support_action_stats = normalize_support_action_stats(data.get("support_action_stats", {}))
-    persisted_voice_joined_at = {
-        str(member_id): float(joined_at)
-        for member_id, joined_at in data.get("active_voice_joined_at", {}).items()
-    }
-    daily_report_sent_dates = {
-        str(day)
-        for day in data.get("daily_report_sent_dates", [])
-    }
+    with database_connection() as connection:
+        cursor = connection.cursor()
+
+        cursor.execute("SELECT member_id, seconds FROM voice_totals")
+        voice_total_seconds = {str(row[0]): int(row[1]) for row in cursor.fetchall()}
+
+        cursor.execute("SELECT day, member_id, seconds FROM support_daily")
+        for day, member_id, seconds in cursor.fetchall():
+            support_daily_seconds.setdefault(str(day), {})[str(member_id)] = int(seconds)
+
+        cursor.execute("SELECT day, member_id, verified, no_access FROM support_actions")
+        for day, member_id, verified, no_access in cursor.fetchall():
+            support_action_stats.setdefault(str(day), {})[str(member_id)] = {
+                "verified": int(verified),
+                "no_access": int(no_access),
+                "reviews": [],
+            }
+
+        cursor.execute(
+            """
+            SELECT day, member_id, reviewer_id, reviewer_name, rating, comment, timestamp
+            FROM support_reviews
+            ORDER BY timestamp DESC
+            """
+        )
+        for day, member_id, reviewer_id, reviewer_name, rating, comment, timestamp in cursor.fetchall():
+            stats = support_action_bucket(str(day), int(member_id))
+            reviews = stats.setdefault("reviews", [])
+            if isinstance(reviews, list):
+                reviews.append(
+                    {
+                        "reviewer_id": int(reviewer_id),
+                        "reviewer_name": str(reviewer_name),
+                        "rating": int(rating),
+                        "comment": str(comment),
+                        "timestamp": str(timestamp),
+                    }
+                )
+
+        cursor.execute("SELECT member_id, joined_at FROM active_voice")
+        persisted_voice_joined_at = {str(row[0]): float(row[1]) for row in cursor.fetchall()}
+
+        cursor.execute("SELECT day FROM daily_reports")
+        daily_report_sent_dates = {str(row[0]) for row in cursor.fetchall()}
 
 
 def save_stats() -> None:
-    data = {
-        "voice_total_seconds": voice_total_seconds,
-        "support_daily_seconds": support_daily_seconds,
-        "support_action_stats": support_action_stats,
-        "active_voice_joined_at": {
-            str(member_id): joined_at
-            for member_id, joined_at in voice_joined_at.items()
-        },
-        "daily_report_sent_dates": sorted(daily_report_sent_dates),
-    }
-    stats_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    with database_connection() as connection:
+        cursor = connection.cursor()
+        for table in (
+            "voice_totals",
+            "support_daily",
+            "support_actions",
+            "support_reviews",
+            "active_voice",
+            "daily_reports",
+        ):
+            cursor.execute(f"DELETE FROM {table}")
+
+        cursor.executemany(
+            sql("INSERT INTO voice_totals (member_id, seconds) VALUES (?, ?)"),
+            [(str(member_id), int(seconds)) for member_id, seconds in voice_total_seconds.items()],
+        )
+
+        cursor.executemany(
+            sql("INSERT INTO support_daily (day, member_id, seconds) VALUES (?, ?, ?)"),
+            [
+                (str(day), str(member_id), int(seconds))
+                for day, members in support_daily_seconds.items()
+                for member_id, seconds in members.items()
+            ],
+        )
+
+        action_rows = []
+        review_rows = []
+        for day, members in support_action_stats.items():
+            for member_id, stats in members.items():
+                if not isinstance(stats, dict):
+                    continue
+                action_rows.append(
+                    (
+                        str(day),
+                        str(member_id),
+                        int(stats.get("verified", 0) or 0),
+                        int(stats.get("no_access", 0) or 0),
+                    )
+                )
+                reviews = stats.get("reviews", [])
+                if isinstance(reviews, list):
+                    for review in reviews:
+                        if not isinstance(review, dict):
+                            continue
+                        review_rows.append(
+                            (
+                                str(day),
+                                str(member_id),
+                                str(review.get("reviewer_id", "")),
+                                str(review.get("reviewer_name", "")),
+                                int(review.get("rating", 0) or 0),
+                                str(review.get("comment", "")),
+                                str(review.get("timestamp", "")),
+                            )
+                        )
+
+        cursor.executemany(
+            sql(
+                """
+                INSERT INTO support_actions (day, member_id, verified, no_access)
+                VALUES (?, ?, ?, ?)
+                """
+            ),
+            action_rows,
+        )
+        cursor.executemany(
+            sql(
+                """
+                INSERT INTO support_reviews
+                    (day, member_id, reviewer_id, reviewer_name, rating, comment, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+            ),
+            review_rows,
+        )
+        cursor.executemany(
+            sql("INSERT INTO active_voice (member_id, joined_at) VALUES (?, ?)"),
+            [(str(member_id), float(joined_at)) for member_id, joined_at in voice_joined_at.items()],
+        )
+        cursor.executemany(
+            sql("INSERT INTO daily_reports (day) VALUES (?)"),
+            [(str(day),) for day in sorted(daily_report_sent_dates)],
+        )
+        connection.commit()
 
 
 def role_id(name: str) -> int:
@@ -1493,8 +1732,6 @@ def mutate_config(setting: str, value: str, mode: str) -> str:
         data["daily_report_channel_id"] = parse_snowflake(value) if value.strip() else 0
     elif setting == "review_image_url":
         data["review_image_url"] = value.strip()
-    elif setting == "stats_file":
-        data["stats_file"] = value.strip() or "voice_stats.json"
     elif setting in {"passing_channel", "verifier_role", "owner"}:
         target_id = parse_snowflake(value)
         list_key = {
@@ -1540,7 +1777,6 @@ def mutate_config(setting: str, value: str, mode: str) -> str:
         app_commands.Choice(name="Канал логов верификации", value="verification_log_channel"),
         app_commands.Choice(name="Канал отчётов нормы", value="daily_report_channel"),
         app_commands.Choice(name="Картинка отзывов", value="review_image_url"),
-        app_commands.Choice(name="Файл статистики", value="stats_file"),
     ],
     mode=[
         app_commands.Choice(name="set", value="set"),

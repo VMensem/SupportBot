@@ -5,6 +5,8 @@ __pycache__/
 .venv/
 venv/
 voice_stats.json
+supportbot.db
+supportbot.db-*
 bot.log
 bot.err.log
 run-*.log

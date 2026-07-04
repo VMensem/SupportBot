@@ -37,6 +37,7 @@ python bot.py
 Environment Variable:
 
 - `CONFIG_JSON` - весь JSON-конфиг бота одной переменной.
+- `DATABASE_URL` - ссылка на PostgreSQL базу Render.
 
 Пример `CONFIG_JSON`:
 
@@ -56,7 +57,6 @@ Environment Variable:
   "verifier_role_ids": [
     1521958636195151934
   ],
-  "stats_file": "voice_stats.json",
   "review_log_channel_id": 1521969810974441552,
   "review_image_url": "",
   "owner_ids": [],
@@ -66,7 +66,14 @@ Environment Variable:
 }
 ```
 
-Важно: на Render бесплатный диск может сбрасываться при перезапуске. Текущая статистика хранится в `voice_stats.json`, поэтому для полной надёжности потом лучше перенести статистику в базу данных.
+Важно: статистика и отзывы больше не пишутся в JSON. На Render они хранятся в PostgreSQL через `DATABASE_URL`. Если `DATABASE_URL` не указан, бот локально создаст SQLite-файл `supportbot.db`.
+
+Для Render:
+
+1. Создай PostgreSQL в Render.
+2. Скопируй Internal Database URL.
+3. Вставь его в Environment Variable `DATABASE_URL`.
+4. В `CONFIG_JSON` вставь весь конфиг вместе с токеном.
 
 ## Команды
 

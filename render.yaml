@@ -8,5 +8,7 @@ services:
     envVars:
       - key: CONFIG_JSON
         sync: false
+      - key: DATABASE_URL
+        sync: false
       - key: PYTHONUNBUFFERED
         value: "1"
