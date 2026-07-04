@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+import threading
 from types import SimpleNamespace
 import time
 from pathlib import Path
@@ -12,6 +13,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
+from flask import Flask, jsonify
 
 
 MENTION_RE = re.compile(r"^<@!?(\d+)>$")
@@ -21,6 +23,218 @@ MSK_TZ = timezone(timedelta(hours=3), "MSK")
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 SQLITE_DB_PATH = Path(os.getenv("SUPPORTBOT_DB_PATH", "supportbot.db"))
 USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+PORT = int(os.getenv("PORT", "10000"))
+
+web_app = Flask(__name__)
+
+
+@web_app.get("/")
+def web_index():
+    bot_name = str(bot.user) if bot.user else "SupportBot"
+    database_name = "PostgreSQL" if USE_POSTGRES else "SQLite"
+    guild_id = int(config.guild_id)
+    html = f"""<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SupportBot</title>
+  <style>
+    :root {{
+      color-scheme: dark;
+      --bg: #111216;
+      --panel: #1b1d24;
+      --panel-soft: #22252e;
+      --line: #343844;
+      --text: #f4f1ea;
+      --muted: #b7ac9c;
+      --accent: #ff8a2a;
+      --accent-soft: rgba(255, 138, 42, .14);
+      --ok: #42d392;
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top left, rgba(255, 138, 42, .18), transparent 34rem),
+        linear-gradient(135deg, #111216 0%, #171920 55%, #101115 100%);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }}
+    main {{
+      width: min(920px, calc(100vw - 32px));
+      padding: 34px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(27, 29, 36, .86);
+      box-shadow: 0 24px 80px rgba(0, 0, 0, .42);
+      backdrop-filter: blur(14px);
+    }}
+    .top {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      margin-bottom: 30px;
+    }}
+    .brand {{
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }}
+    .logo {{
+      width: 54px;
+      height: 54px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(255, 138, 42, .35);
+      color: var(--accent);
+      font-size: 28px;
+      font-weight: 900;
+    }}
+    h1 {{
+      margin: 0;
+      font-size: clamp(28px, 5vw, 46px);
+      line-height: 1;
+      letter-spacing: 0;
+    }}
+    .subtitle {{
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 15px;
+    }}
+    .badge {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 13px;
+      border: 1px solid rgba(66, 211, 146, .28);
+      border-radius: 999px;
+      background: rgba(66, 211, 146, .1);
+      color: #d9ffed;
+      font-weight: 700;
+      white-space: nowrap;
+    }}
+    .dot {{
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--ok);
+      box-shadow: 0 0 18px var(--ok);
+    }}
+    .grid {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }}
+    .card {{
+      min-height: 116px;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel-soft);
+    }}
+    .label {{
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }}
+    .value {{
+      margin-top: 12px;
+      overflow-wrap: anywhere;
+      font-size: 19px;
+      font-weight: 850;
+      line-height: 1.22;
+    }}
+    .footer {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 14px;
+    }}
+    a {{
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 800;
+    }}
+    @media (max-width: 760px) {{
+      main {{ padding: 22px; }}
+      .top, .footer {{ align-items: flex-start; flex-direction: column; }}
+      .grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+    }}
+    @media (max-width: 460px) {{
+      .grid {{ grid-template-columns: 1fr; }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <section class="top">
+      <div class="brand">
+        <div class="logo">S</div>
+        <div>
+          <h1>SupportBot</h1>
+          <div class="subtitle">Malory verification service</div>
+        </div>
+      </div>
+      <div class="badge"><span class="dot"></span> Online</div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <div class="label">Discord</div>
+        <div class="value">{bot_name}</div>
+      </article>
+      <article class="card">
+        <div class="label">Database</div>
+        <div class="value">{database_name}</div>
+      </article>
+      <article class="card">
+        <div class="label">Guild</div>
+        <div class="value">{guild_id}</div>
+      </article>
+      <article class="card">
+        <div class="label">Commands</div>
+        <div class="value">/verify /status /stats /sadmin</div>
+      </article>
+    </section>
+
+    <section class="footer">
+      <span>Health endpoint: <a href="/health">/health</a></span>
+      <span>discord.gg/malory</span>
+    </section>
+  </main>
+</body>
+</html>"""
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
+
+
+@web_app.get("/health")
+def web_health():
+    return jsonify(
+        {
+            "ok": True,
+            "bot": str(bot.user) if bot.user else None,
+            "guild_id": int(config.guild_id),
+            "database": "postgres" if USE_POSTGRES else "sqlite",
+        }
+    )
+
+
+def run_web_server() -> None:
+    web_app.run(host="0.0.0.0", port=PORT, use_reloader=False)
 
 
 
@@ -2118,6 +2332,7 @@ async def main() -> None:
         bot.tree.remove_command("verify", guild=staff_guild)
 
     bot.add_view(StatusView())
+    threading.Thread(target=run_web_server, daemon=True).start()
     asyncio.create_task(stats_checkpoint_loop())
     asyncio.create_task(daily_support_report_loop())
     try:
