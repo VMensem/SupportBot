@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.agents/
+.codex/
+.venv/
+venv/
+voice_stats.json
+bot.log
+bot.err.log
+run-*.log
+run-*.err.log
+.env
+.env.*
