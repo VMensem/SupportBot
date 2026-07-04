@@ -23,7 +23,67 @@ SQLITE_DB_PATH = Path(os.getenv("SUPPORTBOT_DB_PATH", "supportbot.db"))
 USE_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 
 
-def load_config() -> SimpleNamespace:
+
+DEFAULT_CONFIG = {
+    "token": "",
+    "guild_id": 0,
+    "roles": {
+        "unverify": 0,
+        "female": 0,
+        "male": 0,
+        "no_access": 0,
+    },
+    "passing_voice_channel_ids": [],
+    "verifier_role_ids": [],
+    "review_log_channel_id": 0,
+    "staff_guild_id": 0,
+    "verification_log_channel_id": 0,
+    "daily_report_channel_id": 0,
+    "review_image_url": "",
+    "owner_ids": [],
+}
+
+CONFIG_DB_KEYS = tuple(key for key in DEFAULT_CONFIG if key != "token")
+
+
+def read_seed_token() -> str:
+    config_json = os.getenv("CONFIG_JSON") or os.getenv("SUPPORTBOT_CONFIG_JSON")
+    if config_json:
+        try:
+            env_data = json.loads(config_json)
+        except json.JSONDecodeError:
+            env_data = {}
+        if isinstance(env_data, dict) and env_data.get("token"):
+            return str(env_data["token"])
+
+    if CONFIG_PATH.exists():
+        try:
+            data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return ""
+        return str(data.get("token", "") or "")
+
+    return ""
+
+
+def apply_config_defaults(data: dict) -> dict:
+    merged = DEFAULT_CONFIG | data
+    merged["roles"] = DEFAULT_CONFIG["roles"] | merged.get("roles", {})
+    for key in ("passing_voice_channel_ids", "verifier_role_ids", "owner_ids"):
+        merged[key] = [int(item) for item in merged.get(key, []) if item]
+    for key in (
+        "guild_id",
+        "review_log_channel_id",
+        "staff_guild_id",
+        "verification_log_channel_id",
+        "daily_report_channel_id",
+    ):
+        merged[key] = int(merged.get(key, 0) or 0)
+    merged["token"] = os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN") or read_seed_token()
+    return merged
+
+
+def read_seed_config_data() -> dict:
     config_json = os.getenv("CONFIG_JSON") or os.getenv("SUPPORTBOT_CONFIG_JSON")
     data: dict = {}
 
@@ -31,47 +91,63 @@ def load_config() -> SimpleNamespace:
         try:
             data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"config.json сломан: {exc}") from exc
+            raise RuntimeError(f"config.json broken: {exc}") from exc
 
     if config_json:
         try:
             env_data = json.loads(config_json)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"CONFIG_JSON сломан: {exc}") from exc
+            raise RuntimeError(f"CONFIG_JSON broken: {exc}") from exc
         if not isinstance(env_data, dict):
-            raise RuntimeError("CONFIG_JSON должен быть JSON-объектом")
+            raise RuntimeError("CONFIG_JSON must be a JSON object")
         data = data | env_data
 
-    if not data:
-        raise RuntimeError("Не найден config.json или CONFIG_JSON")
+    data.pop("token", None)
+    return {key: value for key, value in data.items() if key in CONFIG_DB_KEYS}
 
-    defaults = {
-        "token": "",
-        "guild_id": 0,
-        "roles": {
-            "unverify": 0,
-            "female": 0,
-            "male": 0,
-            "no_access": 0,
-        },
-        "passing_voice_channel_ids": [],
-        "verifier_role_ids": [],
-        "review_log_channel_id": 0,
-        "staff_guild_id": 0,
-        "verification_log_channel_id": 0,
-        "daily_report_channel_id": 0,
-        "review_image_url": "",
-        "owner_ids": [],
-    }
-    merged = defaults | data
-    merged["roles"] = defaults["roles"] | merged.get("roles", {})
-    env_token = os.getenv("DISCORD_TOKEN") or os.getenv("BOT_TOKEN")
-    if env_token:
-        merged["token"] = env_token
+
+def read_config_rows(cursor) -> dict:
+    cursor.execute("SELECT key, value FROM bot_config")
+    data = {}
+    for key, value in cursor.fetchall():
+        if key not in CONFIG_DB_KEYS:
+            continue
+        try:
+            data[str(key)] = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            data[str(key)] = value
+    return data
+
+
+def write_config_rows(cursor, data: dict) -> None:
+    cursor.execute("DELETE FROM bot_config")
+    rows = [
+        (key, json.dumps(data.get(key, DEFAULT_CONFIG[key]), ensure_ascii=False))
+        for key in CONFIG_DB_KEYS
+    ]
+    cursor.executemany(
+        sql("INSERT INTO bot_config (key, value) VALUES (?, ?)"),
+        rows,
+    )
+
+
+def ensure_database_config(cursor) -> None:
+    cursor.execute("SELECT COUNT(*) FROM bot_config")
+    count = int(cursor.fetchone()[0])
+    if count:
+        return
+
+    seed = read_seed_config_data()
+    write_config_rows(cursor, apply_config_defaults(seed))
+
+
+def load_config() -> SimpleNamespace:
+    init_database()
+    with database_connection() as connection:
+        cursor = connection.cursor()
+        data = read_config_rows(cursor)
+    merged = apply_config_defaults(data)
     return SimpleNamespace(**merged)
-
-
-config = load_config()
 
 
 def configured_command_guild_ids() -> list[int]:
@@ -83,11 +159,20 @@ def configured_command_guild_ids() -> list[int]:
 
 
 def read_config_data() -> dict:
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    init_database()
+    with database_connection() as connection:
+        cursor = connection.cursor()
+        data = read_config_rows(cursor)
+    return apply_config_defaults(data)
 
 
 def write_config_data(data: dict) -> None:
-    CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    data = {key: value for key, value in data.items() if key in CONFIG_DB_KEYS}
+    init_database()
+    with database_connection() as connection:
+        cursor = connection.cursor()
+        write_config_rows(cursor, apply_config_defaults(data))
+        connection.commit()
 
 
 def reload_runtime_config() -> None:
@@ -164,6 +249,14 @@ def init_database() -> None:
         if USE_POSTGRES:
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS bot_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS voice_totals (
                     member_id TEXT PRIMARY KEY,
                     seconds BIGINT NOT NULL DEFAULT 0
@@ -223,6 +316,14 @@ def init_database() -> None:
         else:
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS bot_config (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS voice_totals (
                     member_id TEXT PRIMARY KEY,
                     seconds INTEGER NOT NULL DEFAULT 0
@@ -279,7 +380,11 @@ def init_database() -> None:
                 )
                 """
             )
+        ensure_database_config(cursor)
         connection.commit()
+
+
+config = load_config()
 
 
 def load_stats() -> None:
@@ -1086,7 +1191,7 @@ async def apply_verification_role(
 
     if chosen_role is None:
         await interaction.response.send_message(
-            f"Роль `{role_name}` не найдена. Проверь ID в `config.json`.",
+            f"Роль `{role_name}` не найдена. Проверь ID через `/sadmin`.",
             ephemeral=True,
         )
         return
@@ -1751,7 +1856,7 @@ def mutate_config(setting: str, value: str, mode: str) -> str:
 
     write_config_data(data)
     reload_runtime_config()
-    return "Готово, config.json обновлён."
+    return "Готово, настройки в БД обновлены."
 
 
 @bot.tree.command(name="sadmin", description="Настройка SupportBot только для Владельца сервера либо человека с правами администратора")
@@ -1997,7 +2102,7 @@ def validate_config() -> None:
     if not config.token:
         raise RuntimeError("Впиши DISCORD_TOKEN в переменные окружения Render или token в config.json")
     if not config.guild_id:
-        raise RuntimeError("Впиши guild_id в config.json")
+        raise RuntimeError("Впиши guild_id через стартовый config.json или /sadmin")
 
 
 async def main() -> None:

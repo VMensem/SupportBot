@@ -11,69 +11,44 @@ Discord-бот для Support-верификации с guild slash-команд
 python -m pip install -r requirements.txt
 ```
 
-3. Для локального запуска можно заполнить `config.json`.
-4. Запусти:
+3. Заполни `config.json`. Это стартовый конфиг для первой инициализации БД.
+4. Токен можно вписать в `config.json` локально или передать переменной `DISCORD_TOKEN`.
+5. Запусти:
 
 ```powershell
 python bot.py
 ```
 
+Локально, если `DATABASE_URL` не указан, бот создаст SQLite-файл `supportbot.db`.
+
 ## Render
 
-Создавай **Background Worker**.
+Создавай сервис через `render.yaml` как Blueprint. Он поднимет:
 
-Build Command:
+- Background Worker `supportbot`
+- PostgreSQL `supportbot-db`
+- `DATABASE_URL` автоматически из базы
 
-```bash
-pip install -r requirements.txt
-```
+Руками в Render нужно добавить только:
 
-Start Command:
+- `DISCORD_TOKEN` - токен Discord-бота
 
-```bash
-python bot.py
-```
+`config.json` из репозитория нужен только для первого заполнения таблицы `bot_config`. После этого все настройки живут в БД, а `/sadmin` меняет именно БД. При рестарте Render настройки не слетят.
 
-Environment Variable:
+Если базу создаёшь руками, тогда добавь в Environment ещё:
 
-- `CONFIG_JSON` - весь JSON-конфиг бота одной переменной.
-- `DATABASE_URL` - ссылка на PostgreSQL базу Render.
+- `DATABASE_URL` - Internal Database URL PostgreSQL
 
-Пример `CONFIG_JSON`:
+## Что хранится в БД
 
-```json
-{
-  "token": "TOKEN_HERE",
-  "guild_id": 1304590614163230741,
-  "roles": {
-    "unverify": 1521958991058567209,
-    "female": 1521958744789880913,
-    "male": 1521958748405633074,
-    "no_access": 1521958738573922436
-  },
-  "passing_voice_channel_ids": [
-    1304590614641508477
-  ],
-  "verifier_role_ids": [
-    1521958636195151934
-  ],
-  "review_log_channel_id": 1521969810974441552,
-  "review_image_url": "",
-  "owner_ids": [],
-  "staff_guild_id": 1304590614163230741,
-  "verification_log_channel_id": 1521969810974441552,
-  "daily_report_channel_id": 1521986974209282179
-}
-```
-
-Важно: статистика и отзывы больше не пишутся в JSON. На Render они хранятся в PostgreSQL через `DATABASE_URL`. Если `DATABASE_URL` не указан, бот локально создаст SQLite-файл `supportbot.db`.
-
-Для Render:
-
-1. Создай PostgreSQL в Render.
-2. Скопируй Internal Database URL.
-3. Вставь его в Environment Variable `DATABASE_URL`.
-4. В `CONFIG_JSON` вставь весь конфиг вместе с токеном.
+- конфиг бота из `/sadmin`
+- роли и каналы
+- owner IDs
+- статистика войса
+- активные войс-сессии
+- статистика саппортов
+- отзывы
+- отметки дневных отчётов
 
 ## Команды
 
