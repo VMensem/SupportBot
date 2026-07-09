@@ -27,7 +27,7 @@ PORT = int(os.getenv("PORT", "10000"))
 
 web_app = Flask(__name__)
 
-@app.route('/mbot.jpg')
+@web_app.route('/mbot.jpg')
 def favicon():
     return send_file('mbot.jpg')
 @web_app.get("/")
