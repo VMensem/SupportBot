@@ -39,7 +39,7 @@ def web_index():
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MemsemBot</title>
-  <link rel="icon" type="image/png" href="{{ url_for('static', filename='mbot.jpg') }}">
+  <link rel="icon" type="image/png" href="/mbot.jpg">
   <style>
     :root {{
       color-scheme: dark;
@@ -184,7 +184,7 @@ def web_index():
   <main>
     <section class="top">
       <div class="brand">
-        <div class="logo"><link rel="icon" type="image/png" href="{{ url_for('static', filename='mbot.jpg') }}"></div>
+        <div class="logo"><link rel="icon" type="image/png" href="/mbot.jpg"></div>
         <div>
           <h1>MensemBot</h1>
           <div class="subtitle">MensemBot</div>
