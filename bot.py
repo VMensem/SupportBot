@@ -29,7 +29,17 @@ web_app = Flask(__name__)
 
 @web_app.route('/favicon.ico')
 def favicon():
-    return send_file(os.path.join(os.path.dirname(__file__), 'mbot.jpg'))
+    return send_file(
+        os.path.join(os.path.dirname(__file__), 'mbot.jpg'),
+        mimetype='image/jpeg'
+    )
+
+@web_app.route('/mbot.jpg')
+def mbot_image():
+    return send_file(
+        os.path.join(os.path.dirname(__file__), 'mbot.jpg'),
+        mimetype='image/jpeg'
+    )
 @web_app.get("/")
 def web_index():
     bot_name = str(bot.user) if bot.user else "MensemBot"
