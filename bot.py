@@ -30,7 +30,7 @@ web_app = Flask(__name__)
 
 @web_app.get("/")
 def web_index():
-    bot_name = str(bot.user) if bot.user else "SupportBot"
+    bot_name = str(bot.user) if bot.user else "MensemBot"
     database_name = "PostgreSQL" if USE_POSTGRES else "SQLite"
     guild_id = int(config.guild_id)
     html = f"""<!doctype html>
@@ -38,7 +38,8 @@ def web_index():
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>SupportBot</title>
+  <title>MemsemBot</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='mbot.jpg') }}">
   <style>
     :root {{
       color-scheme: dark;
@@ -49,7 +50,7 @@ def web_index():
       --text: #f4f1ea;
       --muted: #b7ac9c;
       --accent: #ff8a2a;
-      --accent-soft: rgba(255, 138, 42, .14);
+      --accent-soft: rgba(255, 50, 50, 0.14);
       --ok: #42d392;
     }}
     * {{ box-sizing: border-box; }}
@@ -59,7 +60,7 @@ def web_index():
       display: grid;
       place-items: center;
       background:
-        radial-gradient(circle at top left, rgba(255, 138, 42, .18), transparent 34rem),
+        radial-gradient(circle at top left, rgba(255, 50, 50, .18), transparent 34rem),
         linear-gradient(135deg, #111216 0%, #171920 55%, #101115 100%);
       color: var(--text);
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -93,7 +94,7 @@ def web_index():
       place-items: center;
       border-radius: 14px;
       background: var(--accent-soft);
-      border: 1px solid rgba(255, 138, 42, .35);
+      border: 1px solid rgba(255, 50, 50, .35);
       color: var(--accent);
       font-size: 28px;
       font-weight: 900;
@@ -183,10 +184,10 @@ def web_index():
   <main>
     <section class="top">
       <div class="brand">
-        <div class="logo">S</div>
+        <div class="logo"><link rel="icon" type="image/png" href="{{ url_for('static', filename='mbot.jpg') }}"></div>
         <div>
-          <h1>SupportBot</h1>
-          <div class="subtitle">Malory verification service</div>
+          <h1>MensemBot</h1>
+          <div class="subtitle">MensemBot</div>
         </div>
       </div>
       <div class="badge"><span class="dot"></span> Online</div>
@@ -213,7 +214,7 @@ def web_index():
 
     <section class="footer">
       <span>Health endpoint: <a href="/health">/health</a></span>
-      <span>discord.gg/malory</span>
+      <span>discord.gg/mensem</span>
     </section>
   </main>
 </body>
@@ -2233,7 +2234,7 @@ async def on_voice_state_update(
 @bot.event
 async def on_ready() -> None:
     assert bot.user is not None
-    await bot.change_presence(activity=discord.Game(name="discord.gg/malory"))
+    await bot.change_presence(activity=discord.Game(name="discord.gg/mensem"))
     guild = bot.get_guild(config.guild_id)
     if guild is None:
         print(f"Guild {config.guild_id} не найден в кеше. Команды все равно будут синхронизированы по ID.")
