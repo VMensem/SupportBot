@@ -13,7 +13,7 @@ from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
-from flask import Flask, jsonify
+from flask import Flask, jsonify, send_file
 
 
 MENTION_RE = re.compile(r"^<@!?(\d+)>$")
