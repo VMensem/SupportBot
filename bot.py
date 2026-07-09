@@ -27,9 +27,9 @@ PORT = int(os.getenv("PORT", "10000"))
 
 web_app = Flask(__name__)
 
-@web_app.route('/mbot.jpg')
+@web_app.route('/favicon.ico')
 def favicon():
-    return send_file('mbot.jpg')
+    return send_file(os.path.join(os.path.dirname(__file__), 'mbot.jpg'))
 @web_app.get("/")
 def web_index():
     bot_name = str(bot.user) if bot.user else "MensemBot"
