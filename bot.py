@@ -38,10 +38,10 @@ def web_index():
     html = f"""<!doctype html>
 <html lang="ru">
 <head>
+  <link rel="icon" href="/favicon.ico?v=2">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>MemsemBot</title>
-  <link rel="shortcut icon" href="/favicon.ico">
   <style>
     :root {{
       color-scheme: dark;
@@ -100,6 +100,12 @@ def web_index():
       color: var(--accent);
       font-size: 28px;
       font-weight: 900;
+    }}
+    .logo img {{
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 14px;
     }}
     h1 {{
       margin: 0;
@@ -186,7 +192,9 @@ def web_index():
   <main>
     <section class="top">
       <div class="brand">
-        <div class="logo"><link rel="shortcut icon" href="/favicon.ico"></div>
+        <div class="logo">
+          <img src="/mbot.jpg" alt="MensemBot">
+        </div>
         <div>
           <h1>MensemBot</h1>
           <div class="subtitle">MensemBot</div>
